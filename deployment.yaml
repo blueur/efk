@@ -1,0 +1,186 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: efk
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /?(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: efk-web
+                port:
+                  name: web
+          - path: /api/?(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: efk-elasticsearch
+                port:
+                  name: elasticsearch
+          - path: /kibana/?(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: efk-kibana
+                port:
+                  name: kibana
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: efk-web
+spec:
+  selector:
+    matchLabels:
+      app: efk-web
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: efk-web
+    spec:
+      containers:
+        - name: efk-web
+          image: httpd:alpine
+          ports:
+            - containerPort: 80
+              name: web
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: efk-web
+spec:
+  ports:
+    - port: 80
+      targetPort: web
+  selector:
+    app: efk-web
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: efk-elasticsearch
+spec:
+  selector:
+    matchLabels:
+      app: efk-elasticsearch
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: efk-elasticsearch
+    spec:
+      containers:
+        - name: efk-elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: xpack.security.enabled
+              value: "false"
+          ports:
+            - containerPort: 9200
+              name: elasticsearch
+          resources:
+            limits:
+              cpu: "500m"
+              memory: "1024Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: efk-elasticsearch
+spec:
+  ports:
+    - port: 9200
+      targetPort: elasticsearch
+  selector:
+    app: efk-elasticsearch
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: efk-fluentd
+spec:
+  selector:
+    matchLabels:
+      app: efk-fluentd
+  template:
+    metadata:
+      labels:
+        app: efk-fluentd
+    spec:
+      containers:
+        - name: fluentd
+          image: quay.io/fluent/fluentd-kubernetes-daemonset
+          env:
+            - name: FLUENT_ELASTICSEARCH_HOST
+              value: "efk-elasticsearch"
+            - name: FLUENT_ELASTICSEARCH_PORT
+              value: "9200"
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "512Mi"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: efk-kibana
+spec:
+  selector:
+    matchLabels:
+      app: efk-kibana
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: efk-kibana
+    spec:
+      containers:
+        - name: efk-kibana
+          image: docker.elastic.co/kibana/kibana:8.13.4
+          env:
+            - name: ELASTICSEARCH_URL
+              value: http://elasticsearch:9200
+          ports:
+            - containerPort: 5601
+              name: kibana
+          resources:
+            limits:
+              cpu: "250m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: efk-kibana
+spec:
+  ports:
+    - port: 5601
+      targetPort: kibana
+  selector:
+    app: efk-kibana
